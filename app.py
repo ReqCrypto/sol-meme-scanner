@@ -9,10 +9,10 @@ import uvicorn
 
 # ---------------- CONFIG ----------------
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID", 0))
+CHANNEL_ID = int(os.getenv("CHANNEL_ID", 0))  # numeric channel ID
 
-DEXSCREENER_NEW_TOKENS = "https://api.dexscreener.com/latest/dex/pairs/solana"
-RUGCHECK_TOKEN = "https://api.rugcheck.xyz/v1/tokens/{}"
+DEXSCREENER_API = "https://api.dexscreener.com/latest/dex/pairs"
+RUGCHECK_API = "https://api.rugcheck.xyz/v1/tokens/{}"
 
 http = httpx.Client(timeout=15.0, headers={"User-Agent": "pump-scanner/1.0"})
 app = FastAPI(title="Pump.fun + Axiom Scanner")
@@ -20,16 +20,18 @@ app = FastAPI(title="Pump.fun + Axiom Scanner")
 # ---------------- HELPERS ----------------
 def fetch_pairs():
     try:
-        r = http.get(DEXSCREENER_NEW_TOKENS)
+        r = http.get(DEXSCREENER_API)
         r.raise_for_status()
-        return r.json().get("pairs") or []
+        all_pairs = r.json().get("pairs") or []
+        sol_pairs = [p for p in all_pairs if (p.get("chain") or "").lower() == "solana"]
+        return sol_pairs
     except Exception as e:
         print("Error fetching pairs:", e)
         return []
 
 def rugcheck(mint: str) -> bool:
     try:
-        r = http.get(RUGCHECK_TOKEN.format(mint))
+        r = http.get(RUGCHECK_API.format(mint))
         if r.status_code == 200:
             verdict = (r.json().get("verdict") or "").lower()
             if "honeypot" in verdict or "malicious" in verdict:
@@ -60,7 +62,7 @@ def build_candidate(pair):
     if not mint or not rugcheck(mint):
         return None
     score = momentum_score(pair)
-    if score < 40:
+    if score < 40:  # arbitrary threshold
         return None
     return {
         "name": base.get("name"),
@@ -85,7 +87,7 @@ def candidates(limit: int = 5):
 
 # ---------------- DISCORD BOT ----------------
 intents = discord.Intents.default()
-intents.message_content = False  # Only enable if reading messages
+intents.message_content = False  # Only enable if you read messages
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 @tasks.loop(seconds=60)
@@ -103,9 +105,11 @@ async def scan_and_post():
         print("No candidates found")
         return
     top = max(cands, key=lambda x: x["score"])
-    msg = (f"🚀 {top['name']} ({top['symbol']})\n"
-           f"Score: {top['score']} | LQ: ${top['liq_usd']}\n"
-           f"{top['links']['pumpfun']} | {top['links']['axiom']}")
+    msg = (
+        f"🚀 {top['name']} ({top['symbol']})\n"
+        f"Score: {top['score']} | LQ: ${top['liq_usd']}\n"
+        f"{top['links']['pumpfun']} | {top['links']['axiom']}"
+    )
     try:
         await channel.send(msg)
         print(f"Posted to Discord: {top['name']}")
@@ -119,16 +123,15 @@ async def on_ready():
 
 # ---------------- RUN BOTH ----------------
 async def main():
-    # Start Uvicorn in a task
     port = int(os.getenv("PORT", 8000))
     config = uvicorn.Config("app:app", host="0.0.0.0", port=port, log_level="info")
     server = uvicorn.Server(config)
-    server_task = asyncio.create_task(server.serve())
 
-    # Start Discord bot
-    discord_task = asyncio.create_task(bot.start(DISCORD_TOKEN))
-
-    await asyncio.gather(server_task, discord_task)
+    # Run both FastAPI and Discord bot concurrently
+    await asyncio.gather(
+        server.serve(),
+        bot.start(DISCORD_TOKEN)
+    )
 
 if __name__ == "__main__":
     asyncio.run(main())
