@@ -1,23 +1,23 @@
 import os
 import httpx
 import asyncio
-import threading
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 import discord
-from discord.ext import tasks
+from discord.ext import tasks, commands
+import threading
 
 # ---------------- CONFIG ----------------
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID", "0"))
+CHANNEL_ID = int(os.getenv("CHANNEL_ID", 0))
 
 DEXSCREENER_NEW_TOKENS = "https://api.dexscreener.com/latest/dex/pairs/solana"
 RUGCHECK_TOKEN = "https://api.rugcheck.xyz/v1/tokens/{}"
 
-http = httpx.Client(timeout=15.0, headers={"User-Agent": "scanner/0.1"})
+http = httpx.Client(timeout=15.0, headers={"User-Agent": "pump-scanner/1.0"})
 app = FastAPI(title="Pump.fun + Axiom Scanner")
 
-# ---------------- Helpers ----------------
+# ---------------- HELPERS ----------------
 def fetch_pairs():
     try:
         r = http.get(DEXSCREENER_NEW_TOKENS)
@@ -31,8 +31,7 @@ def rugcheck(mint: str) -> bool:
     try:
         r = http.get(RUGCHECK_TOKEN.format(mint))
         if r.status_code == 200:
-            rc = r.json()
-            verdict = (rc.get("verdict") or "").lower()
+            verdict = (r.json().get("verdict") or "").lower()
             if "honeypot" in verdict or "malicious" in verdict:
                 return False
     except Exception as e:
@@ -55,12 +54,12 @@ def links(mint: str):
         "axiom_home": "https://axiom.trade/"
     }
 
-def build_candidate(p):
-    base = p.get("baseToken") or {}
+def build_candidate(pair):
+    base = pair.get("baseToken") or {}
     mint = base.get("address")
     if not mint or not rugcheck(mint):
         return None
-    score = momentum_score(p)
+    score = momentum_score(pair)
     if score < 40:
         return None
     return {
@@ -69,67 +68,66 @@ def build_candidate(p):
         "mint": mint,
         "score": round(score, 2),
         "links": links(mint),
-        "liq_usd": (p.get("liquidity") or {}).get("usd")
+        "liq_usd": (pair.get("liquidity") or {}).get("usd")
     }
 
-# ---------------- FastAPI ----------------
+# ---------------- FASTAPI ----------------
+@app.get("/health")
+def health():
+    return {"ok": True}
+
 @app.get("/candidates")
 def candidates(limit: int = 5):
-    out = []
-    for p in fetch_pairs():
-        c = build_candidate(p)
-        if c: out.append(c)
+    out = [build_candidate(p) for p in fetch_pairs()]
+    out = [c for c in out if c]
     out.sort(key=lambda x: x["score"], reverse=True)
     return JSONResponse({"count": len(out[:limit]), "candidates": out[:limit]})
 
-@app.get("/health")
-def health(): 
-    return {"ok": True}
-
-# ---------------- Discord bot ----------------
+# ---------------- DISCORD BOT ----------------
 intents = discord.Intents.default()
-intents.message_content = True
-client = discord.Client(intents=intents)
+# Only enable message_content if you need to read messages
+intents.message_content = False  
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 @tasks.loop(seconds=60)
 async def scan_and_post():
-    if CHANNEL_ID == 0: 
+    if CHANNEL_ID == 0:
         print("CHANNEL_ID not set")
         return
-    chan = client.get_channel(CHANNEL_ID)
-    if not chan: 
+    channel = bot.get_channel(CHANNEL_ID)
+    if not channel:
         print("Discord channel not found")
         return
     cands = [build_candidate(p) for p in fetch_pairs()]
     cands = [c for c in cands if c]
-    if not cands: 
-        print("No candidates found this round")
+    if not cands:
+        print("No candidates found")
         return
     top = max(cands, key=lambda x: x["score"])
     msg = (f"🚀 {top['name']} ({top['symbol']})\n"
            f"Score: {top['score']} | LQ: ${top['liq_usd']}\n"
            f"{top['links']['pumpfun']} | {top['links']['axiom']}")
     try:
-        await chan.send(msg)
+        await channel.send(msg)
         print(f"Posted to Discord: {top['name']}")
     except Exception as e:
-        print("Error sending Discord message:", e)
+        print("Error sending message:", e)
 
-@client.event
+@bot.event
 async def on_ready():
-    print(f"Discord logged in as {client.user}")
+    print(f"Discord logged in as {bot.user}")
     scan_and_post.start()
 
-# ---------------- Startup ----------------
+# ---------------- RUN ----------------
 def start_api():
     import uvicorn
     port = int(os.getenv("PORT", 8000))
     uvicorn.run("app:app", host="0.0.0.0", port=port, reload=False)
 
-# Start API in background thread
+# Start FastAPI in a background thread
 threading.Thread(target=start_api, daemon=True).start()
 
-# Start Discord bot in main thread
+# Run Discord bot in main asyncio loop
 if DISCORD_TOKEN and CHANNEL_ID != 0:
-    client.run(DISCORD_TOKEN)
+    asyncio.run(bot.start(DISCORD_TOKEN))
 
