@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 import discord
 from discord.ext import tasks, commands
-import threading
+import uvicorn
 
 # ---------------- CONFIG ----------------
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
@@ -85,8 +85,7 @@ def candidates(limit: int = 5):
 
 # ---------------- DISCORD BOT ----------------
 intents = discord.Intents.default()
-# Only enable message_content if you need to read messages
-intents.message_content = False  
+intents.message_content = False  # Only enable if reading messages
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 @tasks.loop(seconds=60)
@@ -118,16 +117,19 @@ async def on_ready():
     print(f"Discord logged in as {bot.user}")
     scan_and_post.start()
 
-# ---------------- RUN ----------------
-def start_api():
-    import uvicorn
+# ---------------- RUN BOTH ----------------
+async def main():
+    # Start Uvicorn in a task
     port = int(os.getenv("PORT", 8000))
-    uvicorn.run("app:app", host="0.0.0.0", port=port, reload=False)
+    config = uvicorn.Config("app:app", host="0.0.0.0", port=port, log_level="info")
+    server = uvicorn.Server(config)
+    server_task = asyncio.create_task(server.serve())
 
-# Start FastAPI in a background thread
-threading.Thread(target=start_api, daemon=True).start()
+    # Start Discord bot
+    discord_task = asyncio.create_task(bot.start(DISCORD_TOKEN))
 
-# Run Discord bot in main asyncio loop
-if DISCORD_TOKEN and CHANNEL_ID != 0:
-    asyncio.run(bot.start(DISCORD_TOKEN))
+    await asyncio.gather(server_task, discord_task)
+
+if __name__ == "__main__":
+    asyncio.run(main())
 
