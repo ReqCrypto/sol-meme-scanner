@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 import discord
 from discord.ext import tasks, commands
 import uvicorn
+import time
 
 # ---------------- CONFIG ----------------
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
@@ -24,9 +25,10 @@ def fetch_pairs():
         r.raise_for_status()
         all_pairs = r.json().get("pairs") or []
         sol_pairs = [p for p in all_pairs if (p.get("chain") or "").lower() == "solana"]
+        print(f"Fetched {len(sol_pairs)} Solana pairs")
         return sol_pairs
     except Exception as e:
-        print("Error fetching pairs:", e)
+        print(f"Error fetching pairs: {e}")
         return []
 
 def rugcheck(mint: str) -> bool:
@@ -37,7 +39,7 @@ def rugcheck(mint: str) -> bool:
             if "honeypot" in verdict or "malicious" in verdict:
                 return False
     except Exception as e:
-        print("Rugcheck error:", e)
+        print(f"Rugcheck error for {mint}: {e}")
     return True
 
 def momentum_score(pair) -> float:
@@ -62,7 +64,7 @@ def build_candidate(pair):
     if not mint or not rugcheck(mint):
         return None
     score = momentum_score(pair)
-    if score < 40:  # arbitrary threshold
+    if score < 40:
         return None
     return {
         "name": base.get("name"),
@@ -87,34 +89,34 @@ def candidates(limit: int = 5):
 
 # ---------------- DISCORD BOT ----------------
 intents = discord.Intents.default()
-intents.message_content = False  # Only enable if you read messages
+intents.message_content = False
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 @tasks.loop(seconds=60)
 async def scan_and_post():
-    if CHANNEL_ID == 0:
-        print("CHANNEL_ID not set")
-        return
-    channel = bot.get_channel(CHANNEL_ID)
-    if not channel:
-        print("Discord channel not found")
-        return
-    cands = [build_candidate(p) for p in fetch_pairs()]
-    cands = [c for c in cands if c]
-    if not cands:
-        print("No candidates found")
-        return
-    top = max(cands, key=lambda x: x["score"])
-    msg = (
-        f"🚀 {top['name']} ({top['symbol']})\n"
-        f"Score: {top['score']} | LQ: ${top['liq_usd']}\n"
-        f"{top['links']['pumpfun']} | {top['links']['axiom']}"
-    )
     try:
+        if CHANNEL_ID == 0:
+            print("CHANNEL_ID not set")
+            return
+        channel = bot.get_channel(CHANNEL_ID)
+        if not channel:
+            print("Discord channel not found")
+            return
+        cands = [build_candidate(p) for p in fetch_pairs()]
+        cands = [c for c in cands if c]
+        if not cands:
+            print("No candidates found")
+            return
+        top = max(cands, key=lambda x: x["score"])
+        msg = (
+            f"🚀 {top['name']} ({top['symbol']})\n"
+            f"Score: {top['score']} | LQ: ${top['liq_usd']}\n"
+            f"{top['links']['pumpfun']} | {top['links']['axiom']}"
+        )
         await channel.send(msg)
-        print(f"Posted to Discord: {top['name']}")
+        print(f"[{time.strftime('%X')}] Posted to Discord: {top['name']}")
     except Exception as e:
-        print("Error sending message:", e)
+        print(f"Error in scan_and_post: {e}")
 
 @bot.event
 async def on_ready():
@@ -122,15 +124,22 @@ async def on_ready():
     scan_and_post.start()
 
 # ---------------- RUN BOTH ----------------
+async def run_discord():
+    while True:
+        try:
+            await bot.start(DISCORD_TOKEN)
+        except Exception as e:
+            print(f"Discord bot crashed: {e}")
+            await asyncio.sleep(10)
+
 async def main():
     port = int(os.getenv("PORT", 8000))
     config = uvicorn.Config("app:app", host="0.0.0.0", port=port, log_level="info")
     server = uvicorn.Server(config)
 
-    # Run both FastAPI and Discord bot concurrently
     await asyncio.gather(
         server.serve(),
-        bot.start(DISCORD_TOKEN)
+        run_discord()
     )
 
 if __name__ == "__main__":
