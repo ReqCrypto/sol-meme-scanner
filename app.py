@@ -5,6 +5,7 @@ import discord
 from discord.ext import tasks
 from dotenv import load_dotenv
 
+# Load environment variables
 load_dotenv()
 
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
@@ -27,8 +28,7 @@ TWITTER_URL = "https://api.twitter.com/2/tweets/search/recent"
 async def fetch_json(session, url, headers=None):
     try:
         async with session.get(url, headers=headers) as resp:
-            data = await resp.json()
-            return data
+            return await resp.json()
     except Exception as e:
         print(f"[ERROR] fetching {url}: {e}")
         return None
@@ -38,9 +38,7 @@ async def scan_memecoins():
     async with aiohttp.ClientSession() as session:
         print("[DEBUG] Starting memecoin scan...")
 
-        # -----------------------
-        # Axiom Surge (filters OFF)
-        # -----------------------
+        # Axiom Surge
         axiom_data = await fetch_json(session, AXIOM_URL)
         if axiom_data and "trending" in axiom_data:
             print(f"[DEBUG] Found {len(axiom_data['trending'])} coins on 
@@ -54,9 +52,7 @@ Axiom")
                     "marketCap": coin.get("marketCap", "N/A")
                 })
 
-        # -----------------------
-        # Pump.fun (filters OFF)
-        # -----------------------
+        # Pump.fun
         pump_data = await fetch_json(session, PUMPFUN_URL)
         if pump_data and "coins" in pump_data:
             print(f"[DEBUG] Found {len(pump_data['coins'])} coins on 
@@ -70,9 +66,7 @@ Pump.fun")
                     "marketCap": coin.get("marketCap", "N/A")
                 })
 
-        # -----------------------
         # Twitter memecoin hashtag (optional)
-        # -----------------------
         if TWITTER_BEARER:
             headers = {"Authorization": f"Bearer {TWITTER_BEARER}"}
             twitter_data = await fetch_json(session, TWITTER_URL + 
@@ -118,7 +112,6 @@ async def post_trending():
 @client.event
 async def on_ready():
     print(f"✅ Logged in as {client.user}")
-    # Test message
     channel = client.get_channel(CHANNEL_ID)
     if channel:
         await channel.send("✅ Bot is live and ready! Test message sent.")
