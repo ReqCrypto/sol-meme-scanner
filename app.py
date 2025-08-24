@@ -17,21 +17,9 @@ client = discord.Client(intents=intents)
 # -----------------------
 # API Endpoints
 # -----------------------
-AXIOM_URL = "https://api.axiom.xyz/trending"  # primary focus
-PUMPFUN_URL = "https://pump.fun/api/trending"  # optional backup
+AXIOM_URL = "https://api.axiom.xyz/trending"
+PUMPFUN_URL = "https://pump.fun/api/trending"
 TWITTER_URL = "https://api.twitter.com/2/tweets/search/recent"
-
-# -----------------------
-# Relaxed Filter Logic
-# -----------------------
-def is_good_coin(data):
-    """Relaxed: only filter out coins with zero liquidity or invalid 
-marketCap"""
-    mc = data.get("marketCap", 0)
-    liquidity = data.get("liquidity", {}).get("usd", 0)
-    if mc <= 0 or liquidity <= 0:
-        return False
-    return True
 
 # -----------------------
 # Scraper
@@ -42,43 +30,45 @@ async def fetch_json(session, url, headers=None):
             data = await resp.json()
             return data
     except Exception as e:
-        print(f"Error fetching {url}: {e}")
+        print(f"[ERROR] fetching {url}: {e}")
         return None
 
 async def scan_memecoins():
     results = []
     async with aiohttp.ClientSession() as session:
+        print("[DEBUG] Starting memecoin scan...")
+
         # -----------------------
-        # Axiom Surge (primary focus)
+        # Axiom Surge (filters OFF)
         # -----------------------
         axiom_data = await fetch_json(session, AXIOM_URL)
         if axiom_data and "trending" in axiom_data:
             print(f"[DEBUG] Found {len(axiom_data['trending'])} coins on 
 Axiom")
             for coin in axiom_data["trending"]:
-                if is_good_coin(coin):
-                    results.append({
-                        "name": coin["name"],
-                        "symbol": coin["symbol"],
-                        "link": f"https://axiom.xyz/token/{coin['id']}",
-                        "marketCap": coin.get("marketCap", "N/A")
-                    })
+                # Filters temporarily disabled
+                results.append({
+                    "name": coin["name"],
+                    "symbol": coin["symbol"],
+                    "link": f"https://axiom.xyz/token/{coin['id']}",
+                    "marketCap": coin.get("marketCap", "N/A")
+                })
 
         # -----------------------
-        # Pump.fun (optional)
+        # Pump.fun (filters OFF)
         # -----------------------
         pump_data = await fetch_json(session, PUMPFUN_URL)
         if pump_data and "coins" in pump_data:
             print(f"[DEBUG] Found {len(pump_data['coins'])} coins on 
 Pump.fun")
             for coin in pump_data["coins"]:
-                if is_good_coin(coin):
-                    results.append({
-                        "name": coin["name"],
-                        "symbol": coin["symbol"],
-                        "link": f"https://pump.fun/{coin['mint']}",
-                        "marketCap": coin.get("marketCap", "N/A")
-                    })
+                # Filters temporarily disabled
+                results.append({
+                    "name": coin["name"],
+                    "symbol": coin["symbol"],
+                    "link": f"https://pump.fun/{coin['mint']}",
+                    "marketCap": coin.get("marketCap", "N/A")
+                })
 
         # -----------------------
         # Twitter memecoin hashtag (optional)
@@ -99,6 +89,7 @@ f"https://twitter.com/i/web/status/{tweet['id']}",
                         "marketCap": "N/A"
                     })
 
+    print(f"[DEBUG] Total coins collected this cycle: {len(results)}")
     return results
 
 # -----------------------
@@ -108,7 +99,7 @@ f"https://twitter.com/i/web/status/{tweet['id']}",
 async def post_trending():
     channel = client.get_channel(CHANNEL_ID)
     if not channel:
-        print("⚠️ Bot could not find the channel.")
+        print("[WARN] Bot could not find the channel.")
         return
 
     coins = await scan_memecoins()
@@ -131,7 +122,8 @@ async def on_ready():
     channel = client.get_channel(CHANNEL_ID)
     if channel:
         await channel.send("✅ Bot is live and ready! Test message sent.")
-    post_trending.start()
+    await post_trending()  # run once immediately
+    post_trending.start()   # continue every 5 minutes
 
 # -----------------------
 # Run Bot
