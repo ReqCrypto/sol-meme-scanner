@@ -69,8 +69,11 @@ Pump.fun")
         # Twitter memecoin hashtag (optional)
         if TWITTER_BEARER:
             headers = {"Authorization": f"Bearer {TWITTER_BEARER}"}
-            twitter_data = await fetch_json(session, TWITTER_URL + 
-"?query=%23memecoin&max_results=5", headers=headers)
+            twitter_data = await fetch_json(
+                session, 
+                TWITTER_URL + "?query=%23memecoin&max_results=5", 
+                headers=headers
+            )
             if twitter_data and "data" in twitter_data:
                 print(f"[DEBUG] Found {len(twitter_data['data'])} tweets 
 on #memecoin")
