@@ -1,17 +1,19 @@
 import os
 import aiohttp
-import asyncio
 import discord
 from discord.ext import tasks
 from dotenv import load_dotenv
 
+# -----------------------
 # Load environment variables
+# -----------------------
 load_dotenv()
-
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
-TWITTER_BEARER = os.getenv("TWITTER_BEARER")  # optional
 
+# -----------------------
+# Discord Client Setup
+# -----------------------
 intents = discord.Intents.default()
 client = discord.Client(intents=intents)
 
@@ -20,19 +22,21 @@ client = discord.Client(intents=intents)
 # -----------------------
 AXIOM_URL = "https://api.axiom.xyz/trending"
 PUMPFUN_URL = "https://pump.fun/api/trending"
-TWITTER_URL = "https://api.twitter.com/2/tweets/search/recent"
 
 # -----------------------
-# Scraper
+# Fetch JSON Helper
 # -----------------------
 async def fetch_json(session, url, headers=None):
     try:
         async with session.get(url, headers=headers) as resp:
             return await resp.json()
     except Exception as e:
-        print(f"[ERROR] fetching {url}: {e}")
+        print(f"[ERROR] Fetching {url}: {e}")
         return None
 
+# -----------------------
+# Scan Memecoins (Filters Off)
+# -----------------------
 async def scan_memecoins():
     results = []
     async with aiohttp.ClientSession() as session:
@@ -44,7 +48,6 @@ async def scan_memecoins():
             print(f"[DEBUG] Found {len(axiom_data['trending'])} coins on 
 Axiom")
             for coin in axiom_data["trending"]:
-                # Filters temporarily disabled
                 results.append({
                     "name": coin["name"],
                     "symbol": coin["symbol"],
@@ -58,33 +61,12 @@ Axiom")
             print(f"[DEBUG] Found {len(pump_data['coins'])} coins on 
 Pump.fun")
             for coin in pump_data["coins"]:
-                # Filters temporarily disabled
                 results.append({
                     "name": coin["name"],
                     "symbol": coin["symbol"],
                     "link": f"https://pump.fun/{coin['mint']}",
                     "marketCap": coin.get("marketCap", "N/A")
                 })
-
-        # Twitter memecoin hashtag (optional)
-        if TWITTER_BEARER:
-            headers = {"Authorization": f"Bearer {TWITTER_BEARER}"}
-            twitter_data = await fetch_json(
-                session, 
-                TWITTER_URL + "?query=%23memecoin&max_results=5", 
-                headers=headers
-            )
-            if twitter_data and "data" in twitter_data:
-                print(f"[DEBUG] Found {len(twitter_data['data'])} tweets 
-on #memecoin")
-                for tweet in twitter_data["data"]:
-                    results.append({
-                        "name": "Tweet",
-                        "symbol": "X",
-                        "link": 
-f"https://twitter.com/i/web/status/{tweet['id']}",
-                        "marketCap": "N/A"
-                    })
 
     print(f"[DEBUG] Total coins collected this cycle: {len(results)}")
     return results
@@ -110,7 +92,7 @@ async def post_trending():
         await channel.send(msg)
 
 # -----------------------
-# On Ready
+# On Ready Event
 # -----------------------
 @client.event
 async def on_ready():
@@ -118,8 +100,8 @@ async def on_ready():
     channel = client.get_channel(CHANNEL_ID)
     if channel:
         await channel.send("✅ Bot is live and ready! Test message sent.")
-    await post_trending()  # run once immediately
-    post_trending.start()   # continue every 5 minutes
+    await post_trending()  # Run immediately once
+    post_trending.start()   # Start loop every 5 minutes
 
 # -----------------------
 # Run Bot
